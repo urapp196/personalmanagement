@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import App from './App';
@@ -10,10 +10,19 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
+const loginToDashboard = async (user) => {
+  render(<App />);
+
+  fireEvent.change(screen.getByLabelText(/nama/i), { target: { value: 'Fhilip' } });
+  fireEvent.change(screen.getByLabelText(/email/i), { target: { value: 'fhilip@example.com' } });
+  fireEvent.change(screen.getByLabelText(/password/i), { target: { value: 'rahasia' } });
+  await user.click(screen.getByRole('button', { name: /masuk ke dashboard/i }));
+};
+
 describe('Tips strategi bulan ini', () => {
   it('menampilkan daftar langkah saat tombol jalankan saran diklik', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await loginToDashboard(user);
 
     await user.click(screen.getByRole('button', { name: /jalankan saran/i }));
 
@@ -24,22 +33,20 @@ describe('Tips strategi bulan ini', () => {
 
   it('memungkinkan pengguna mengubah transaksi yang sudah tersimpan', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await loginToDashboard(user);
 
     await user.click(screen.getByRole('button', { name: /tambah transaksi/i }));
-    await user.type(screen.getByLabelText(/kegiatan/i), 'Bonus proyek');
-    await user.selectOptions(screen.getByLabelText(/jenis/i), 'Pemasukan');
-    await user.type(screen.getByLabelText(/nominal \(rp\)/i), '2500000');
-    await user.type(screen.getByLabelText(/catatan/i), 'Tambahan');
+    fireEvent.change(screen.getByLabelText(/kegiatan/i), { target: { value: 'Bonus proyek' } });
+    fireEvent.change(screen.getByLabelText(/jenis/i), { target: { value: 'Pemasukan' } });
+    fireEvent.change(screen.getByLabelText(/nominal \(rp\)/i), { target: { value: '2500000' } });
+    fireEvent.change(screen.getByLabelText(/catatan/i), { target: { value: 'Tambahan' } });
     await user.click(screen.getByRole('button', { name: /simpan aktivitas/i }));
 
     const editButton = await screen.findByRole('button', { name: /ubah transaksi bonus proyek/i });
     await user.click(editButton);
 
-    await user.clear(screen.getByLabelText(/kegiatan/i));
-    await user.type(screen.getByLabelText(/kegiatan/i), 'Bonus proyek final');
-    await user.clear(screen.getByLabelText(/nominal \(rp\)/i));
-    await user.type(screen.getByLabelText(/nominal \(rp\)/i), '3000000');
+    fireEvent.change(screen.getByLabelText(/kegiatan/i), { target: { value: 'Bonus proyek final' } });
+    fireEvent.change(screen.getByLabelText(/nominal \(rp\)/i), { target: { value: '3000000' } });
     await user.click(screen.getByRole('button', { name: /simpan perubahan/i }));
 
     expect(await screen.findByText('Bonus proyek final')).toBeInTheDocument();
@@ -48,5 +55,18 @@ describe('Tips strategi bulan ini', () => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     expect(saved).toContain('Bonus proyek final');
     expect(saved).toContain('3000000');
+  });
+
+  it('menampilkan bagian akun setelah login dan bisa keluar', async () => {
+    const user = userEvent.setup();
+    await loginToDashboard(user);
+
+    expect(screen.getByLabelText(/akun pengguna/i)).toBeInTheDocument();
+    expect(screen.getByText('Fhilip')).toBeInTheDocument();
+    expect(screen.getByText('fhilip@example.com')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /keluar/i }));
+
+    expect(screen.getByRole('button', { name: /masuk ke dashboard/i })).toBeInTheDocument();
   });
 });

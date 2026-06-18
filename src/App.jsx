@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 const periodProfiles = {
   Minggu: {
@@ -91,6 +91,30 @@ const parseAmount = (amount) => {
 const formatCurrency = (value) => `Rp ${Math.abs(value).toLocaleString('id-ID')}`;
 
 const STORAGE_KEY = 'financeflow-dashboard-state';
+const ACCOUNT_STORAGE_KEY = 'financeflow-account-state';
+
+function NeoMark({ compact = false }) {
+  const gradientId = useId().replace(/:/g, '');
+
+  return (
+    <div className={`neo-brand ${compact ? 'compact' : ''}`} aria-hidden="true">
+      <svg className="neo-logo" viewBox="0 0 96 96">
+        <defs>
+          <linearGradient id={gradientId} x1="12" y1="10" x2="84" y2="86">
+            <stop offset="0%" stopColor="#36ffcb" />
+            <stop offset="48%" stopColor="#c6ff4a" />
+            <stop offset="100%" stopColor="#ff4fd8" />
+          </linearGradient>
+        </defs>
+        <path className="neo-logo-ring" stroke={`url(#${gradientId})`} d="M48 10 82 30v36L48 86 14 66V30L48 10Z" />
+        <path className="neo-logo-orbit orbit-a" stroke={`url(#${gradientId})`} d="M24 57c11 20 37 20 48 0" />
+        <path className="neo-logo-orbit orbit-b" stroke={`url(#${gradientId})`} d="M24 39c11-20 37-20 48 0" />
+        <path className="neo-logo-pulse" stroke={`url(#${gradientId})`} d="M31 57h12l7-20 7 30 6-16h10" />
+        <circle className="neo-logo-core" cx="48" cy="48" r="7" />
+      </svg>
+    </div>
+  );
+}
 
 const loadStoredState = () => {
   if (typeof window === 'undefined') return null;
@@ -104,7 +128,26 @@ const loadStoredState = () => {
   }
 };
 
+const loadStoredAccount = () => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const saved = window.localStorage.getItem(ACCOUNT_STORAGE_KEY);
+    return saved ? JSON.parse(saved) : null;
+  } catch (error) {
+    console.warn('Gagal membaca data akun', error);
+    return null;
+  }
+};
+
 export default function App() {
+  const [account, setAccount] = useState(() => loadStoredAccount());
+  const [loginData, setLoginData] = useState({ name: '', email: '', password: '' });
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const scrollFrameRef = useRef(null);
+  const lastScrollProgressRef = useRef(0);
+  const lastShowScrollTopRef = useRef(false);
   const [period, setPeriod] = useState('Bulan');
   const [transactionType, setTransactionType] = useState('Semua');
   const [transactions, setTransactions] = useState(() => {
@@ -126,11 +169,102 @@ export default function App() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    if (account) {
+      window.localStorage.setItem(ACCOUNT_STORAGE_KEY, JSON.stringify(account));
+    } else {
+      window.localStorage.removeItem(ACCOUNT_STORAGE_KEY);
+    }
+  }, [account]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
     window.localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({ transactions, monthlyTarget })
     );
   }, [transactions, monthlyTarget]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const updateScrollState = () => {
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const nextProgress = maxScroll > 0
+        ? Math.round(((window.scrollY / maxScroll) * 100) * 10) / 10
+        : 0;
+      const nextShowScrollTop = window.scrollY > 360;
+
+      if (Math.abs(nextProgress - lastScrollProgressRef.current) >= 0.4) {
+        lastScrollProgressRef.current = nextProgress;
+        setScrollProgress(Math.min(100, Math.max(0, nextProgress)));
+      }
+
+      if (nextShowScrollTop !== lastShowScrollTopRef.current) {
+        lastShowScrollTopRef.current = nextShowScrollTop;
+        setShowScrollTop(nextShowScrollTop);
+      }
+    };
+
+    const scheduleScrollUpdate = () => {
+      if (scrollFrameRef.current) return;
+
+      scrollFrameRef.current = window.requestAnimationFrame(() => {
+        scrollFrameRef.current = null;
+        updateScrollState();
+      });
+    };
+
+    updateScrollState();
+    window.addEventListener('scroll', scheduleScrollUpdate, { passive: true });
+    window.addEventListener('resize', scheduleScrollUpdate);
+
+    return () => {
+      window.removeEventListener('scroll', scheduleScrollUpdate);
+      window.removeEventListener('resize', scheduleScrollUpdate);
+
+      if (scrollFrameRef.current) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
+
+  const handleLogin = (event) => {
+    event.preventDefault();
+
+    const email = loginData.email.trim();
+    const name = loginData.name.trim() || email.split('@')[0] || 'Pengguna';
+
+    if (!email || !loginData.password.trim()) {
+      return;
+    }
+
+    setAccount({
+      name,
+      email,
+      joinedAt: new Date().toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric',
+      }),
+    });
+    setLoginData({ name: '', email: '', password: '' });
+  };
+
+  const handleLogout = () => {
+    setAccount(null);
+    setShowAddForm(false);
+    setEditingTransactionId(null);
+  };
+
+  const handleScrollToTop = () => {
+    if (typeof window === 'undefined') return;
+
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    });
+  };
 
   const transactionSummary = useMemo(() => {
     const income = transactions
@@ -207,6 +341,36 @@ export default function App() {
     return transactions.filter((item) => item.type === transactionType);
   }, [transactionType, transactions]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !account) return undefined;
+
+    const revealItems = Array.from(document.querySelectorAll('[data-scroll-reveal]'));
+
+    if (!('IntersectionObserver' in window)) {
+      revealItems.forEach((item) => item.classList.add('is-visible'));
+      return undefined;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      {
+        threshold: 0.12,
+        rootMargin: '0px 0px -12% 0px',
+      }
+    );
+
+    revealItems.forEach((item) => observer.observe(item));
+
+    return () => observer.disconnect();
+  }, [account, filteredTransactions.length, showActionPlan, showAddForm, showAllTransactions]);
+
   const monthlyProgress = Math.min(100, Math.max(0, Math.round((transactionSummary.savings / Math.max(monthlyTarget, 1)) * 100)));
   const targetLabel = period === 'Bulan' ? formatCurrency(monthlyTarget) : profile.target;
   const targetProgress = period === 'Bulan' ? monthlyProgress : profile.progress;
@@ -271,6 +435,63 @@ export default function App() {
       },
     ];
   }, [monthlyTarget]);
+
+  if (!account) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card glass-card">
+          <div className="auth-copy">
+            <div className="brand-lockup">
+              <NeoMark />
+              <p className="eyebrow">FinanceFlow</p>
+            </div>
+            <h1>Masuk untuk mengelola dashboard keuangan Anda.</h1>
+            <p className="subtle-text">
+              Gunakan akun Anda agar data transaksi, target tabungan, dan ringkasan keuangan tetap tersimpan di browser ini.
+            </p>
+          </div>
+
+          <form className="login-form" onSubmit={handleLogin}>
+            <h2>Akun pengguna</h2>
+            <label>
+              Nama
+              <input
+                type="text"
+                value={loginData.name}
+                onChange={(event) => setLoginData((current) => ({ ...current, name: event.target.value }))}
+                placeholder="Nama Anda"
+                autoComplete="name"
+              />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={loginData.email}
+                onChange={(event) => setLoginData((current) => ({ ...current, email: event.target.value }))}
+                placeholder="nama@email.com"
+                autoComplete="email"
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                type="password"
+                value={loginData.password}
+                onChange={(event) => setLoginData((current) => ({ ...current, password: event.target.value }))}
+                placeholder="Minimal isi untuk masuk"
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            <button className="primary-btn" type="submit">Masuk ke dashboard</button>
+            <p className="login-note">Login ini disimpan lokal untuk demo dan belum terhubung ke server autentikasi.</p>
+          </form>
+        </section>
+      </main>
+    );
+  }
 
   const handleStartEditTransaction = (item) => {
     setEditingTransactionId(item.id);
@@ -347,9 +568,32 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="hero-card glass-card">
+      <div className="scroll-progress" aria-hidden="true">
+        <span style={{ transform: `scaleX(${scrollProgress / 100})` }} />
+      </div>
+
+      <section className="account-strip glass-card reveal-on-scroll" aria-label="Akun pengguna" data-scroll-reveal>
+        <NeoMark compact />
+        <div className="account-avatar" aria-hidden="true">
+          {account.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="account-details">
+          <p className="eyebrow">Akun aktif</p>
+          <strong>{account.name}</strong>
+          <span>{account.email}</span>
+        </div>
+        <div className="account-meta">
+          <span>Bergabung {account.joinedAt}</span>
+          <button className="ghost-btn" type="button" onClick={handleLogout}>Keluar</button>
+        </div>
+      </section>
+
+      <section className="hero-card glass-card reveal-on-scroll reveal-delay-1" data-scroll-reveal>
         <div>
-          <p className="eyebrow">FinanceFlow</p>
+          <div className="brand-lockup">
+            <NeoMark />
+            <p className="eyebrow">FinanceFlow</p>
+          </div>
           <h1>Dashboard keuangan yang lebih tajam, lebih rapi, dan siap membantu keputusan cepat.</h1>
           <p className="subtle-text">
             Pantau arus kas, pengeluaran, tabungan, dan target Anda dengan tampilan modern, ringkas, dan mudah dipahami.
@@ -413,7 +657,7 @@ export default function App() {
         </aside>
       </section>
 
-      <section className="stats-grid">
+      <section className="stats-grid reveal-on-scroll reveal-delay-2" data-scroll-reveal>
         {metrics.map((item) => (
           <article className="glass-card metric-card" key={item.label}>
             <p>{item.label}</p>
@@ -424,7 +668,7 @@ export default function App() {
       </section>
 
       <section className="content-grid">
-        <article className="glass-card panel-card">
+        <article className="glass-card panel-card reveal-on-scroll from-left" data-scroll-reveal>
           <header className="panel-head">
             <div>
               <p className="eyebrow">Ringkasan</p>
@@ -504,14 +748,19 @@ export default function App() {
                 { label: 'Tabungan', value: transactionSummary.savings, color: 'bar-c', tone: 'gold' },
                 { label: 'Saldo', value: transactionSummary.balance, color: 'bar-d', tone: 'sky' },
               ].map((item) => {
-                const height = Math.max(10, Math.min(100, (Math.abs(item.value) / Math.max(transactionSummary.totalActivity, 1)) * 140));
+                const percent = Math.round((Math.abs(item.value) / Math.max(transactionSummary.totalActivity, 1)) * 100);
+                const height = Math.max(10, Math.min(100, percent * 1.4));
                 return (
                   <div
                     key={item.label}
                     className={`bar ${item.color}`}
-                    title={`${item.label}: ${formatCurrency(item.value)}`}
+                    tabIndex={0}
+                    aria-label={`${item.label} ${percent}% dari total aktivitas`}
+                    title={`${item.label}: ${percent}% (${formatCurrency(item.value)})`}
                     style={{ height: `${height}%`, background: item.label === 'Pendapatan' ? 'linear-gradient(180deg, #2dd4bf, #38bdf8)' : item.label === 'Pengeluaran' ? 'linear-gradient(180deg, #c084fc, #818cf8)' : item.label === 'Tabungan' ? 'linear-gradient(180deg, #fbbf24, #fb7185)' : 'linear-gradient(180deg, #38bdf8, #a78bfa)' }}
-                  />
+                  >
+                    <span className="bar-tooltip">{item.label} {percent}%</span>
+                  </div>
                 );
               })}
             </div>
@@ -523,7 +772,7 @@ export default function App() {
           </div>
         </article>
 
-        <article className="glass-card panel-card">
+        <article className="glass-card panel-card reveal-on-scroll from-right" data-scroll-reveal>
           <header className="panel-head">
             <div>
               <p className="eyebrow">Budget</p>
@@ -546,7 +795,7 @@ export default function App() {
       </section>
 
       <section className="content-grid lower-grid">
-        <article className="glass-card panel-card">
+        <article className="glass-card panel-card reveal-on-scroll from-left" data-scroll-reveal>
           <header className="panel-head">
             <div>
               <p className="eyebrow">Aktivitas</p>
@@ -574,7 +823,7 @@ export default function App() {
           </div>
           <div className="transaction-list">
             {visibleTransactions.map((item) => (
-              <article className="transaction-card" key={`${item.name}-${item.time}-${item.amount}`}>
+              <article className="transaction-card reveal-list-item" key={`${item.name}-${item.time}-${item.amount}`}>
                 <div>
                   <strong>{item.name}</strong>
                   <p>{item.type}{item.note ? ` · ${item.note}` : ''}</p>
@@ -609,7 +858,7 @@ export default function App() {
           </div>
         </article>
 
-        <article className="glass-card panel-card tip-card">
+        <article className="glass-card panel-card tip-card reveal-on-scroll from-right" data-scroll-reveal>
           <p className="eyebrow">Tips</p>
           <h3>Strategi hemat bulan ini</h3>
           <ul>
@@ -640,6 +889,15 @@ export default function App() {
           )}
         </article>
       </section>
+
+      <button
+        className={`scroll-top-btn ${showScrollTop ? 'show' : ''}`}
+        type="button"
+        onClick={handleScrollToTop}
+        aria-label="Kembali ke atas"
+      >
+        ^
+      </button>
     </main>
   );
 }
